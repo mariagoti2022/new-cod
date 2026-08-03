@@ -28,70 +28,59 @@ jobs:
           powercfg /s 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
           Write-Host "Turbo Mode ativado!"
 
-      - name: Install AnyDesk - @lucchese
+      - name: Install & Config AnyDesk - @lucchese
         shell: pwsh
         run: |
           Write-Host "Baixando AnyDesk..."
           $url = "https://download.anydesk.com/AnyDesk.exe"
-          $installerPath = "$env:TEMP\AnyDesk_Setup.exe"
-          Invoke-WebRequest -Uri $url -OutFile $installerPath
+          $exePath = "$env:TEMP\AnyDesk.exe"
+          Invoke-WebRequest -Uri $url -OutFile $exePath
           
-          Write-Host "Instalando AnyDesk silenciosamente..."
-          # Tenta instalar tanto em Program Files quanto Program Files (x86)
-          Start-Process -FilePath $installerPath -ArgumentList "--install", "$env:ProgramFiles\AnyDesk", "--start-with-win", "--silent" -Wait
-          
-          $adPaths = @(
-              "$env:ProgramFiles\AnyDesk\AnyDesk.exe",
-              "${env:ProgramFiles(x86)}\AnyDesk\AnyDesk.exe",
-              "$env:TEMP\AnyDesk_Setup.exe" # Fallback para rodar direto do instalador se falhar
-          )
-          
-          $ad = ""
-          foreach ($path in $adPaths) {
-              if (Test-Path $path) {
-                  $ad = $path
-                  break
-              }
-          }
-          
-          if (-not $ad) {
-              Write-Error "AnyDesk nao encontrado apos instalacao."
-              exit 1
-          }
-          
-          Write-Host "AnyDesk encontrado em: $ad"
+          Write-Host "Iniciando AnyDesk em modo servico..."
+          # Inicia o AnyDesk direto do EXE para garantir que ele esteja rodando
+          Start-Process -FilePath $exePath -ArgumentList "--service" -WindowStyle Hidden
+          Start-Sleep -Seconds 5
           
           # Gerar senha aleatória
           $pass = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 10 | % {[char]$_})
           echo "ANYDESK_PASSWORD=$pass" >> $env:GITHUB_ENV
           
-          Write-Host "Configurando senha..."
-          echo $pass | & $ad --set-password
+          Write-Host "Configurando senha de acesso..."
+          echo $pass | & $exePath --set-password
           Start-Sleep -Seconds 5
           
           # Salva o caminho para o proximo passo
-          echo "AD_PATH=$ad" >> $env:GITHUB_ENV
+          echo "AD_PATH=$exePath" >> $env:GITHUB_ENV
 
       - name: Get AnyDesk ID - @lucchese
         shell: pwsh
         run: |
           $ad = $env:AD_PATH
           $id = ""
-          $timeout = 60
-          $elapsed = 0
+          $maxAttempts = 20
+          $attempt = 0
           
-          Write-Host "Aguardando ID..."
-          while (-not $id -and $elapsed -lt $timeout) {
+          Write-Host "Obtendo ID do AnyDesk (isso pode levar um minuto)..."
+          while (-not $id -and $attempt -lt $maxAttempts) {
               $id = & $ad --get-id
-              if ($id) { $id = $id.Trim() }
-              if (-not $id) {
-                  Start-Sleep -Seconds 2
-                  $elapsed += 2
+              if ($id) { 
+                  $id = $id.Trim()
+                  # Verifica se o ID contem apenas numeros (formato valido)
+                  if ($id -match '^\d+$') { break } else { $id = "" }
               }
+              Start-Sleep -Seconds 5
+              $attempt++
+              Write-Host "Tentativa $($attempt)/$maxAttempts..."
           }
           
           if (-not $id) {
-              Write-Error "ID nao gerado."
+              Write-Host "Tentando metodo alternativo para obter ID..."
+              $id = & $ad --get-alias
+              if ($id) { $id = $id.Trim() }
+          }
+          
+          if (-not $id) {
+              Write-Error "Nao foi possivel gerar o ID. Verifique se a rede da VM esta ativa."
               exit 1
           }
           
