@@ -1,4 +1,4 @@
-name: RDP AnyDesk - by @lucchese
+name: AnyDesk Direct - by @lucchese
 
 on:
   workflow_dispatch:
@@ -13,23 +13,6 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: Check CPU - @lucchese
-        id: cpu-check
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
-        run: |
-          $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
-          $cpuName = $cpu.Name.Trim()
-          Write-Host "CPU: $cpuName"
-          
-          if ($cpuName -like "*AMD EPYC*") {
-              Write-Host "AMD detectado. Reiniciando..."
-              gh workflow run "${{ github.workflow }}" --repo "${{ github.repository }}" --ref "${{ github.ref_name }}"
-              exit 1
-          } 
-          Write-Host "Intel Xeon ok. Seguindo..."
-
       - name: Turbo Mode & Optimization - @lucchese
         shell: pwsh
         run: |
@@ -50,31 +33,54 @@ jobs:
         run: |
           Write-Host "Baixando AnyDesk..."
           $url = "https://download.anydesk.com/AnyDesk.exe"
-          $path = "$env:TEMP\AnyDesk.exe"
-          Invoke-WebRequest -Uri $url -OutFile $path
+          $installerPath = "$env:TEMP\AnyDesk_Setup.exe"
+          Invoke-WebRequest -Uri $url -OutFile $installerPath
           
-          Write-Host "Instalando AnyDesk..."
-          Start-Process -FilePath $path -ArgumentList "--install", "$env:ProgramFiles\AnyDesk", "--start-with-win", "--silent" -Wait
+          Write-Host "Instalando AnyDesk silenciosamente..."
+          # Tenta instalar tanto em Program Files quanto Program Files (x86)
+          Start-Process -FilePath $installerPath -ArgumentList "--install", "$env:ProgramFiles\AnyDesk", "--start-with-win", "--silent" -Wait
           
-          # Gerar senha aleatória para o AnyDesk
+          $adPaths = @(
+              "$env:ProgramFiles\AnyDesk\AnyDesk.exe",
+              "${env:ProgramFiles(x86)}\AnyDesk\AnyDesk.exe",
+              "$env:TEMP\AnyDesk_Setup.exe" # Fallback para rodar direto do instalador se falhar
+          )
+          
+          $ad = ""
+          foreach ($path in $adPaths) {
+              if (Test-Path $path) {
+                  $ad = $path
+                  break
+              }
+          }
+          
+          if (-not $ad) {
+              Write-Error "AnyDesk nao encontrado apos instalacao."
+              exit 1
+          }
+          
+          Write-Host "AnyDesk encontrado em: $ad"
+          
+          # Gerar senha aleatória
           $pass = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 10 | % {[char]$_})
           echo "ANYDESK_PASSWORD=$pass" >> $env:GITHUB_ENV
           
-          Write-Host "Configurando senha de acesso..."
-          $ad = "$env:ProgramFiles\AnyDesk\AnyDesk.exe"
+          Write-Host "Configurando senha..."
           echo $pass | & $ad --set-password
-          
           Start-Sleep -Seconds 5
+          
+          # Salva o caminho para o proximo passo
+          echo "AD_PATH=$ad" >> $env:GITHUB_ENV
 
       - name: Get AnyDesk ID - @lucchese
         shell: pwsh
         run: |
-          $ad = "$env:ProgramFiles\AnyDesk\AnyDesk.exe"
+          $ad = $env:AD_PATH
           $id = ""
           $timeout = 60
           $elapsed = 0
           
-          Write-Host "Aguardando geracao do ID..."
+          Write-Host "Aguardando ID..."
           while (-not $id -and $elapsed -lt $timeout) {
               $id = & $ad --get-id
               if ($id) { $id = $id.Trim() }
@@ -85,7 +91,7 @@ jobs:
           }
           
           if (-not $id) {
-              Write-Error "Nao foi possivel obter o ID do AnyDesk."
+              Write-Error "ID nao gerado."
               exit 1
           }
           
@@ -103,15 +109,13 @@ jobs:
           Write-Host "=====================================`n"
           
           $summary = @"
-          ### Acesso via AnyDesk - @lucchese
-          - **AnyDesk ID:** `$id`
-          - **Password:** `$pass`
-
-          *Basta abrir o AnyDesk no seu PC/Celular e digitar o ID acima.*
+          ### Acesso AnyDesk - @lucchese
+          - **ID:** `$id`
+          - **Senha:** `$pass`
           "@
           $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
           
           while ($true) {
-              Write-Host "[$(Get-Date)] AnyDesk Active - ID: $id"
+              Write-Host "[$(Get-Date)] AnyDesk Online - ID: $id"
               Start-Sleep -Seconds 300
           }
