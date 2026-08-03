@@ -36,51 +36,60 @@ jobs:
           $exePath = "$env:TEMP\AnyDesk.exe"
           Invoke-WebRequest -Uri $url -OutFile $exePath
           
-          Write-Host "Iniciando AnyDesk em modo servico..."
-          # Inicia o AnyDesk direto do EXE para garantir que ele esteja rodando
-          Start-Process -FilePath $exePath -ArgumentList "--service" -WindowStyle Hidden
-          Start-Sleep -Seconds 5
+          Write-Host "Instalando AnyDesk..."
+          Start-Process -FilePath $exePath -ArgumentList "--install", "$env:ProgramFiles\AnyDesk", "--start-with-win", "--silent" -Wait
+          
+          $ad = "$env:ProgramFiles\AnyDesk\AnyDesk.exe"
+          if (-not (Test-Path $ad)) { $ad = $exePath }
           
           # Gerar senha aleatória
           $pass = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 10 | % {[char]$_})
           echo "ANYDESK_PASSWORD=$pass" >> $env:GITHUB_ENV
           
-          Write-Host "Configurando senha de acesso..."
-          echo $pass | & $exePath --set-password
-          Start-Sleep -Seconds 5
+          Write-Host "Configurando senha e reiniciando servico..."
+          echo $pass | & $ad --set-password
           
-          # Salva o caminho para o proximo passo
-          echo "AD_PATH=$exePath" >> $env:GITHUB_ENV
+          # Força o reinício do serviço para garantir que ele conecte à rede
+          net stop AnyDesk /y 2>$null
+          net start AnyDesk /y 2>$null
+          
+          Start-Sleep -Seconds 10
+          echo "AD_PATH=$ad" >> $env:GITHUB_ENV
 
       - name: Get AnyDesk ID - @lucchese
         shell: pwsh
         run: |
           $ad = $env:AD_PATH
           $id = ""
-          $maxAttempts = 20
-          $attempt = 0
+          $maxAttempts = 30
           
-          Write-Host "Obtendo ID do AnyDesk (isso pode levar um minuto)..."
-          while (-not $id -and $attempt -lt $maxAttempts) {
+          Write-Host "Tentando obter ID do AnyDesk..."
+          
+          for ($i = 1; $i -le $maxAttempts; $i++) {
+              # Tentativa 1: Via comando oficial
               $id = & $ad --get-id
-              if ($id) { 
+              if ($id -and $id.Trim() -match '^\d+$') { 
                   $id = $id.Trim()
-                  # Verifica se o ID contem apenas numeros (formato valido)
-                  if ($id -match '^\d+$') { break } else { $id = "" }
+                  break 
               }
+              
+              # Tentativa 2: Lendo direto do arquivo de config (Caminho padrão do AnyDesk)
+              $confPath = "$env:ProgramData\AnyDesk\system.conf"
+              if (Test-Path $confPath) {
+                  $conf = Get-Content $confPath
+                  $line = $conf | Select-String "ad.anynet.id="
+                  if ($line) {
+                      $id = $line.ToString().Split('=')[1].Trim()
+                      if ($id -match '^\d+$') { break }
+                  }
+              }
+              
+              Write-Host "Tentativa $i/$maxAttempts: ID ainda nao disponivel..."
               Start-Sleep -Seconds 5
-              $attempt++
-              Write-Host "Tentativa $($attempt)/$maxAttempts..."
           }
           
-          if (-not $id) {
-              Write-Host "Tentando metodo alternativo para obter ID..."
-              $id = & $ad --get-alias
-              if ($id) { $id = $id.Trim() }
-          }
-          
-          if (-not $id) {
-              Write-Error "Nao foi possivel gerar o ID. Verifique se a rede da VM esta ativa."
+          if (-not $id -or -not ($id -match '^\d+$')) {
+              Write-Error "Falha critica: O AnyDesk nao conseguiu se conectar a rede do GitHub para gerar um ID."
               exit 1
           }
           
