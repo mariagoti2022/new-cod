@@ -1,4 +1,4 @@
-name: AnyDesk Direct - by @lucchese
+name: AnyDesk Direct - by @lucchese 12
 
 on:
   workflow_dispatch:
@@ -49,7 +49,7 @@ jobs:
           Write-Host "Configurando senha e reiniciando servico..."
           echo $pass | & $ad --set-password
           
-          # Força o reinício do serviço para garantir que ele conecte à rede
+          # Reinicia o serviço para forçar a conexão
           net stop AnyDesk /y 2>$null
           net start AnyDesk /y 2>$null
           
@@ -63,33 +63,36 @@ jobs:
           $id = ""
           $maxAttempts = 30
           
-          Write-Host "Tentando obter ID do AnyDesk..."
+          Write-Host "Buscando ID do AnyDesk..."
           
           for ($i = 1; $i -le $maxAttempts; $i++) {
-              # Tentativa 1: Via comando oficial
+              # Tentativa 1: Comando direto
               $id = & $ad --get-id
               if ($id -and $id.Trim() -match '^\d+$') { 
                   $id = $id.Trim()
                   break 
               }
               
-              # Tentativa 2: Lendo direto do arquivo de config (Caminho padrão do AnyDesk)
+              # Tentativa 2: Arquivo system.conf
               $confPath = "$env:ProgramData\AnyDesk\system.conf"
               if (Test-Path $confPath) {
                   $conf = Get-Content $confPath
                   $line = $conf | Select-String "ad.anynet.id="
                   if ($line) {
-                      $id = $line.ToString().Split('=')[1].Trim()
-                      if ($id -match '^\d+$') { break }
+                      $val = $line.ToString().Split('=')[1].Trim()
+                      if ($val -match '^\d+$') { 
+                          $id = $val
+                          break 
+                      }
                   }
               }
               
-              Write-Host "Tentativa $i/$maxAttempts: ID ainda nao disponivel..."
+              Write-Host "Tentativa $i de $maxAttempts - Aguardando..."
               Start-Sleep -Seconds 5
           }
           
           if (-not $id -or -not ($id -match '^\d+$')) {
-              Write-Error "Falha critica: O AnyDesk nao conseguiu se conectar a rede do GitHub para gerar um ID."
+              Write-Error "ID nao gerado. A rede pode estar lenta."
               exit 1
           }
           
