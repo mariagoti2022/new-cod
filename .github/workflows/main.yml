@@ -1,4 +1,4 @@
-name: AnyDesk Direct - by @lucchese 12
+name: AnyDesk Direct - by @lucchese
 
 on:
   workflow_dispatch:
@@ -46,10 +46,18 @@ jobs:
           $pass = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 10 | % {[char]$_})
           echo "ANYDESK_PASSWORD=$pass" >> $env:GITHUB_ENV
           
-          Write-Host "Configurando senha e reiniciando servico..."
+          Write-Host "Configurando senha e Acesso Nao Supervisionado..."
           echo $pass | & $ad --set-password
           
-          # Reinicia o serviço para forçar a conexão
+          # Injetar configuracoes de acesso direto no system.conf
+          $confPath = "$env:ProgramData\AnyDesk\system.conf"
+          if (-not (Test-Path "$env:ProgramData\AnyDesk")) { New-Item -Path "$env:ProgramData\AnyDesk" -ItemType Directory -Force }
+          
+          # Garante que o acesso interativo seja "Sempre Permitir" e o acesso nao supervisionado esteja ON
+          Add-Content -Path $confPath -Value "ad.security.interactive_access=2"
+          Add-Content -Path $confPath -Value "ad.security.unattended_access.enabled=1"
+          
+          # Reinicia o serviço para aplicar as travas de seguranca
           net stop AnyDesk /y 2>$null
           net start AnyDesk /y 2>$null
           
@@ -64,16 +72,13 @@ jobs:
           $maxAttempts = 30
           
           Write-Host "Buscando ID do AnyDesk..."
-          
           for ($i = 1; $i -le $maxAttempts; $i++) {
-              # Tentativa 1: Comando direto
               $id = & $ad --get-id
               if ($id -and $id.Trim() -match '^\d+$') { 
                   $id = $id.Trim()
                   break 
               }
               
-              # Tentativa 2: Arquivo system.conf
               $confPath = "$env:ProgramData\AnyDesk\system.conf"
               if (Test-Path $confPath) {
                   $conf = Get-Content $confPath
@@ -86,13 +91,12 @@ jobs:
                       }
                   }
               }
-              
               Write-Host "Tentativa $i de $maxAttempts - Aguardando..."
               Start-Sleep -Seconds 5
           }
           
           if (-not $id -or -not ($id -match '^\d+$')) {
-              Write-Error "ID nao gerado. A rede pode estar lenta."
+              Write-Error "ID nao gerado."
               exit 1
           }
           
@@ -113,6 +117,8 @@ jobs:
           ### Acesso AnyDesk - @lucchese
           - **ID:** `$id`
           - **Senha:** `$pass`
+
+          *Configurado para Acesso Nao Supervisionado (Sem confirmacao).*
           "@
           $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
           
