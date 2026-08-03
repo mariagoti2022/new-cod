@@ -1,0 +1,117 @@
+name: RDP AnyDesk - by @lucchese
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  rdp-lucchese:
+    runs-on: windows-latest
+    timeout-minutes: 3600
+
+    steps:
+      - name: Check CPU - @lucchese
+        id: cpu-check
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+          $cpuName = $cpu.Name.Trim()
+          Write-Host "CPU: $cpuName"
+          
+          if ($cpuName -like "*AMD EPYC*") {
+              Write-Host "AMD detectado. Reiniciando..."
+              gh workflow run "${{ github.workflow }}" --repo "${{ github.repository }}" --ref "${{ github.ref_name }}"
+              exit 1
+          } 
+          Write-Host "Intel Xeon ok. Seguindo..."
+
+      - name: Turbo Mode & Optimization - @lucchese
+        shell: pwsh
+        run: |
+          Write-Host "Otimizando sistema..."
+          Set-MpPreference -DisableRealtimeMonitoring $true -DisableBehaviorMonitoring $true -DisableIOAVProtection $true -DisableScriptScanning $true -SubmitSamplesConsent 2
+          $services = @("DiagTrack", "wscsvc", "SearchIndexer", "SysMain", "WerSvc")
+          foreach ($svc in $services) {
+              if (Get-Service $svc -ErrorAction SilentlyContinue) {
+                  Stop-Service $svc -Force -ErrorAction SilentlyContinue
+                  Set-Service $svc -StartupType Disabled
+              }
+          }
+          powercfg /s 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+          Write-Host "Turbo Mode ativado!"
+
+      - name: Install AnyDesk - @lucchese
+        shell: pwsh
+        run: |
+          Write-Host "Baixando AnyDesk..."
+          $url = "https://download.anydesk.com/AnyDesk.exe"
+          $path = "$env:TEMP\AnyDesk.exe"
+          Invoke-WebRequest -Uri $url -OutFile $path
+          
+          Write-Host "Instalando AnyDesk..."
+          Start-Process -FilePath $path -ArgumentList "--install", "$env:ProgramFiles\AnyDesk", "--start-with-win", "--silent" -Wait
+          
+          # Gerar senha aleatória para o AnyDesk
+          $pass = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 10 | % {[char]$_})
+          echo "ANYDESK_PASSWORD=$pass" >> $env:GITHUB_ENV
+          
+          Write-Host "Configurando senha de acesso..."
+          $ad = "$env:ProgramFiles\AnyDesk\AnyDesk.exe"
+          echo $pass | & $ad --set-password
+          
+          Start-Sleep -Seconds 5
+
+      - name: Get AnyDesk ID - @lucchese
+        shell: pwsh
+        run: |
+          $ad = "$env:ProgramFiles\AnyDesk\AnyDesk.exe"
+          $id = ""
+          $timeout = 60
+          $elapsed = 0
+          
+          Write-Host "Aguardando geracao do ID..."
+          while (-not $id -and $elapsed -lt $timeout) {
+              $id = & $ad --get-id
+              if ($id) { $id = $id.Trim() }
+              if (-not $id) {
+                  Start-Sleep -Seconds 2
+                  $elapsed += 2
+              }
+          }
+          
+          if (-not $id) {
+              Write-Error "Nao foi possivel obter o ID do AnyDesk."
+              exit 1
+          }
+          
+          echo "ANYDESK_ID=$id" >> $env:GITHUB_ENV
+          Write-Host "AnyDesk ID: $id"
+
+      - name: Final Credentials - @lucchese
+        run: |
+          $id = $env:ANYDESK_ID
+          $pass = $env:ANYDESK_PASSWORD
+          
+          Write-Host "`n=== ANYDESK ACCESS || @luccheselindo ==="
+          Write-Host "ID: $id"
+          Write-Host "Password: $pass"
+          Write-Host "=====================================`n"
+          
+          $summary = @"
+          ### Acesso via AnyDesk - @lucchese
+          - **AnyDesk ID:** `$id`
+          - **Password:** `$pass`
+
+          *Basta abrir o AnyDesk no seu PC/Celular e digitar o ID acima.*
+          "@
+          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          
+          while ($true) {
+              Write-Host "[$(Get-Date)] AnyDesk Active - ID: $id"
+              Start-Sleep -Seconds 300
+          }
